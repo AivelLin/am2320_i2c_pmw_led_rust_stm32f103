@@ -12,7 +12,7 @@ use panic_rtt_target as _;
 mod app {
     use am2320::Am2320;
     use rtt_target::{rprintln, rtt_init_print};
-    use stm32f1xx_hal::{pac, prelude::*, i2c::{BlockingI2c, DutyCycle}, timer::{Timer, Tim2NoRemap, Tim2PartialRemap2, Timer2, Channel}, device::TIM2};
+    use stm32f1xx_hal::{pac, prelude::*, i2c::{BlockingI2c, DutyCycle}, timer::{Timer, Tim2NoRemap, Tim2PartialRemap2, Timer2, Channel}, device::{TIM2, TIM3, TIM1}};
     use systick_monotonic::Systick;
 
     const CLOCK_HZ: u32 = 72_000_000;
@@ -24,8 +24,8 @@ mod app {
 
     #[local]
     struct Local {
-        led_pwm: stm32f1xx_hal::timer::PwmHz<TIM2, Tim2NoRemap, (stm32f1xx_hal::timer::Ch<0>, stm32f1xx_hal::timer::Ch<1>, stm32f1xx_hal::timer::Ch<2>, stm32f1xx_hal::timer::Ch<3>), (stm32f1xx_hal::gpio::Pin<'A', 0, stm32f1xx_hal::gpio::Alternate>, stm32f1xx_hal::gpio::Pin<'A', 1, stm32f1xx_hal::gpio::Alternate>, stm32f1xx_hal::gpio::Pin<'A', 2, stm32f1xx_hal::gpio::Alternate>, stm32f1xx_hal::gpio::Pin<'A', 3, stm32f1xx_hal::gpio::Alternate>)>
-        // bme: AM2320<BlockingI2c<I2C1, (SCL, SDA)>>,
+        led_pwm: stm32f1xx_hal::timer::PwmHz<TIM2, Tim2NoRemap, (stm32f1xx_hal::timer::Ch<0>, stm32f1xx_hal::timer::Ch<1>, stm32f1xx_hal::timer::Ch<2>, stm32f1xx_hal::timer::Ch<3>), (stm32f1xx_hal::gpio::Pin<'A', 0, stm32f1xx_hal::gpio::Alternate>, stm32f1xx_hal::gpio::Pin<'A', 1, stm32f1xx_hal::gpio::Alternate>, stm32f1xx_hal::gpio::Pin<'A', 2, stm32f1xx_hal::gpio::Alternate>, stm32f1xx_hal::gpio::Pin<'A', 3, stm32f1xx_hal::gpio::Alternate>)>,
+        out_delay: stm32f1xx_hal::timer::Delay<TIM1, 1000000> ,
     }
 
     #[monotonic(binds = SysTick, default = true)]
@@ -75,8 +75,8 @@ mod app {
         rprintln!("max duty - {}", led_pwm.get_max_duty());
 
         let mut delay = pac.TIM3.delay_us(&clocks);
-
-        
+        let mut out_delay = pac.TIM1.delay_us(&clocks);
+               
         // Acquire the GPIOB peripheral
         let mut gpiob = pac.GPIOB.split();
 
@@ -108,16 +108,17 @@ mod app {
 
         (
             Shared { am2320 },
-            Local { led_pwm
+            Local { led_pwm, out_delay
             },
             init::Monotonics(mono),
         )
     }
 
-    #[idle(local=[led_pwm], shared=[am2320])]
+    #[idle(local=[led_pwm, out_delay], shared=[am2320])]
     fn idle(mut cx: idle::Context) -> ! {
         let mut pwm_counter: u16 = 0;
         let pwm = cx.local.led_pwm;
+        let out_delay = cx.local.out_delay;
         let mut is_up = true;
         loop{
             if is_up {
@@ -140,6 +141,7 @@ mod app {
             
             let measurement = data.expect("can't get measurement");
             rprintln!("{:?}", measurement);
+            out_delay.delay_ms(500_u16); // TODO timer interrupt for read data from am2320
             
         }
     }
