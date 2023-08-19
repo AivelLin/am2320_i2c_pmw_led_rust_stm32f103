@@ -3,17 +3,19 @@
 #![deny(unsafe_code)]
 #![no_main]
 #![no_std]
+#![feature(type_alias_impl_trait)]
 
 use rtic::app;
 use panic_rtt_target as _;
 
 
-#[app(device = stm32f1xx_hal::pac, peripherals = true, dispatchers = [TIM2])]
+#[app(device = stm32f1xx_hal::pac, peripherals = true, dispatchers = [TIM4])]
 mod app {
     use am2320::Am2320;
     use rtt_target::{rprintln, rtt_init_print};
-    use stm32f1xx_hal::{pac, prelude::*, i2c::{BlockingI2c, DutyCycle}, timer::{Timer, Tim2NoRemap, Tim2PartialRemap2, Timer2, Channel}, device::{TIM2, TIM3, TIM1}};
-    use systick_monotonic::Systick;
+    use stm32f1xx_hal::{prelude::*, timer::{Tim2NoRemap, Channel}, device::{TIM2, TIM1}};
+    use rtic_monotonics::systick::Systick;
+    use stm32f1xx_hal::i2c::BlockingI2c;
 
     const CLOCK_HZ: u32 = 72_000_000;
 
@@ -28,12 +30,9 @@ mod app {
         out_delay: stm32f1xx_hal::timer::Delay<TIM1, 1000000> ,
     }
 
-    #[monotonic(binds = SysTick, default = true)]
-    type Tonic = Systick<1000>;
-
 
     #[init]
-    fn init(cx: init::Context) -> (Shared, Local, init::Monotonics) {
+    fn init(cx: init::Context) -> (Shared, Local) {
         // Cortex-M peripherals (Core Peripherals)
         let mut cp = cx.core;
 
@@ -46,7 +45,12 @@ mod app {
 
         // Clock setup
         let mut flash = pac.FLASH.constrain();
-        let mut rcc = pac.RCC.constrain();
+        let rcc = pac.RCC.constrain();
+
+        // Initialize the systick interrupt & obtain the token to prove that we did
+        let systick_mono_token = rtic_monotonics::create_systick_token!();
+        Systick::start(cp.SYST, CLOCK_HZ, systick_mono_token); // default STM32F303 clock-rate is 36MHz
+
         let clocks = rcc
         .cfgr.use_hse(8.MHz())  // use external oscillator (8 MHz)
         .sysclk(72.MHz())  // system clock, PLL multiplier should be 6
@@ -74,8 +78,8 @@ mod app {
 
         rprintln!("max duty - {}", led_pwm.get_max_duty());
 
-        let mut delay = pac.TIM3.delay_us(&clocks);
-        let mut out_delay = pac.TIM1.delay_us(&clocks);
+        let delay = pac.TIM3.delay_us(&clocks);
+        let out_delay = pac.TIM1.delay_us(&clocks);
                
         // Acquire the GPIOB peripheral
         let mut gpiob = pac.GPIOB.split();
@@ -97,20 +101,16 @@ mod app {
             1000,
         );
 
-        let mut am2320 = Am2320::new(am2320_i2c, delay);
+        let am2320 = Am2320::new(am2320_i2c, delay);
 
 
         // Initialize (enable) the monotonic timer (CYCCNT)
         cp.DCB.enable_trace();
         cp.DWT.enable_cycle_counter();
 
-        let mono = Systick::new(cp.SYST, CLOCK_HZ);
-
         (
             Shared { am2320 },
-            Local { led_pwm, out_delay
-            },
-            init::Monotonics(mono),
+            Local { led_pwm, out_delay}
         )
     }
 
